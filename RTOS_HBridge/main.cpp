@@ -47,13 +47,14 @@ int main()
 
     while (true) {
         int newU=0;
-        scanf("%d", &newU);
+        scanf("\n%d", &newU);
         printf(">>>>%d<<<\n", newU);
 
         if(abs(newU) >= abs(u))
         {
             u = newU;
         }
+        wait_us(500*1000);
     }
 }
 

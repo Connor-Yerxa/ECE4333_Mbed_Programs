@@ -38,13 +38,15 @@ int N=64;
 
 int dP0, dT0, dP1, dT1;
 float PosInRads, Vel0=0;
+float posDeg=0;
 uint8_t Dummy=0;
 
-float idealVel = 300;
+// float idealVel = 300;
+float idealAngle = 0; //degrees 1=-180, 2=-90, 3=0, 4=90, 5=180
+int stepsPerRotation = 1216;
 
 //PI controller vars
-float kp = 0.07;
-float ki = 0.5;
+float kp = 0.07, ki = 0.1;
 
 void ResetFPGA()
 {
@@ -86,8 +88,11 @@ int main()
         // printf("%d\n", dP0);
         // in units of counts OR 
         // PosInRads = 2 * 3.1415 * Pos0/(4*N); // in units of rads
-        printf("Vr: %d \t", (int)Vel0);
-        printf("Vi: %d \t", (int)idealVel);
+        printf("Pr: %d \t", (int)posDeg);
+        printf("Pi: %d \t", (int)idealAngle);
+        
+        printf("p: %d \t", (int)(kp*100));
+        printf("i: %d \t", (int)(ki*100));
         // printf("")
         printf("D: %d\n", duty);
 
@@ -97,16 +102,19 @@ int main()
         {
             if(pc.read(&c,1))
             {pc.write(&c, 1);
-                if(c == 'w')
+                switch(c)
                 {
-                    idealVel += scaler;
+                    case '1': idealAngle = -180;
+                    break;
+                    case '2': idealAngle = -90;
+                    break;
+                    case '3': idealAngle = 0;
+                    break;
+                    case '4': idealAngle = 90;
+                    break;
+                    case '5': idealAngle = 180;
+                    break;
                 }
-                if(c == 'W')
-                {
-                    idealVel -= scaler;
-                }
-
-
             }
         }
 
@@ -117,6 +125,8 @@ int main()
 
 // ******** Periodic Timer Interrupt Thread ********
 void PeriodicInterruptThread(void const *argument) {
+    int side=0, newSide=0;
+    float integration=0;
     while (true) {
         osSignalWait(0x1, osWaitForever); // Go to sleep until signal, SignalPi, is received.
 
@@ -137,29 +147,30 @@ void PeriodicInterruptThread(void const *argument) {
         // Velocity estimate 
         Vel0 = 10000 * ((float)dP0) / ((float)dT0); // in units of counts/10.24 μs OR
         // Vel0 = 100 * 2 * 3.1415 * (float)dP0/((float)dT0*4*(float)N*10.24); // in rad/s
+
+        //position estimate
+        posDeg = Pos0 * 360.0f / (float)stepsPerRotation;
+        newSide = idealAngle - posDeg >= 0;
+
+        // float deriv = kd*Vel0/abs(idealAngle-posDeg);
+        // printf("\n%d\n", (int)deriv);
+
+        if(newSide == side) 
+        integration = duty + ki * (idealAngle - posDeg)/abs(idealAngle - posDeg);
+        else integration = 0;
+
         
-        float integration = 0;
+        duty = integration + kp * (idealAngle - posDeg);
 
-        if(Vel0 < idealVel)
+        if(abs(duty) > 0.4*period)
         {
-            integration = ki;
-        }
-        else if(Vel0 == 0)
-        {
-            integration = 0;
-        }
-        else
-        {
-            integration = -1 * ki;
+            duty = 0.4*period * duty/abs(duty);
         }
 
-        duty += integration + kp * (idealVel - Vel0);
-
-        if(duty > 0.4*period)
-        {
-            duty = 0.4*period;
-        }
-        pwm0.pulsewidth_us(duty);
+        dir = duty <= 0;
+        MDIR = dir;
+        pwm0.pulsewidth_us(abs(duty));
+        side = newSide;
     } 
 }
 
