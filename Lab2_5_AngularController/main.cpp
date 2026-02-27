@@ -38,7 +38,7 @@ int N=64;
 
 int dP0, dT0, dP1, dT1;
 float PosInRads, Vel0=0;
-float posDeg=0;
+float posDeg=0, e=0;
 uint8_t Dummy=0;
 
 // float idealVel = 300;
@@ -150,6 +150,9 @@ void PeriodicInterruptThread(void const *argument) {
 
         //position estimate
         posDeg = Pos0 * 360.0f / (float)stepsPerRotation;
+
+    
+
         newSide = idealAngle - posDeg >= 0;
 
         // float deriv = kd*Vel0/abs(idealAngle-posDeg);

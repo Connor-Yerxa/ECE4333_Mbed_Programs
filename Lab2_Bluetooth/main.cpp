@@ -30,6 +30,8 @@ static UnbufferedSerial bluetooth(PB_13,PB_12);
 static UnbufferedSerial pc(USBTX,USBRX);
 int u=0;
 
+uint8_t ID;
+
 int period=500;
 int maxDuty = 0.4*period;
 int duty = 0;
@@ -58,8 +60,15 @@ void ResetFPGA()
     IoReset = 0;
 } 
 
-// main() runs in its own thread in the OS
-int main()
+void ResetFPGA_SPI()
+{
+    SpiReset = 0;
+    SpiReset = 1;
+    wait_us(5);
+    SpiReset = 0;
+}
+
+void init()
 {
     // Start execution of: PeriodicInterruptThread with ID, PeriodicInterruptId:
     PeriodicInterruptId = osThreadCreate(osThread(PeriodicInterruptThread), NULL);
@@ -72,20 +81,21 @@ int main()
     bluetooth.baud(9600);
 
     ResetFPGA();
-
-    SpiReset = 0;
-    SpiReset = 1;
-    wait_us(5);
-    SpiReset = 0;
+    ResetFPGA_SPI();
     
-    uint8_t ID = FPGA.write(0x8004); // ID of SPI slave is returned as 0x0017
+    ID = FPGA.write(0x8004); // ID of SPI slave is returned as 0x0017
 
     pwm0.period_us(period); // This sets the PWM period to 500 us.
 
     pwm0.pulsewidth_us(duty);
     MDIR = dir;
     MBRAKE = brake;
+}
 
+// main() runs in its own thread in the OS
+int main()
+{
+    init();
     while (true) {
         char n = '\n';
         // printf("%d\n", dP0);
@@ -100,8 +110,8 @@ int main()
         // // printf("")
         // printf("D: %d\n", duty);
 
-        // char d='w';
-        // bluetooth.write(&d, 1);
+        char d='\n';
+        bluetooth.write(&d, 1);
 
         char c;
         float scaler=10;
