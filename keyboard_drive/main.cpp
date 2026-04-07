@@ -6,6 +6,8 @@
 #include <chrono>
 using namespace std::chrono;
 
+Mutex mPg;
+
 // Function prototypes
 void PiControlThread(void const *argument);
 void PeriodicInterruptISR(void);
@@ -15,6 +17,8 @@ void WatchdogThread(void const *argument);
 void WatchdogISR(void const *n);
 
 void applyPI(PwmOut * pwm, float * currentVel, float idealVel, int16_t dP, int16_t dT, float * integration, DigitalOut * MDIR);
+void read_serial(UnbufferedSerial * serial);
+
 
 // Processes and threads
 osThreadId WatchdogId, ExtCollisionId, PiControlId;     // Thread ID's
@@ -34,7 +38,7 @@ PwmOut pwm1(PE_11); // PE_9 at CN10 configured as PWM out with alias pwm0
 DigitalOut IoReset(PG_2);
 DigitalOut SpiReset(PG_3);                    // Declare a watchdog timer
 
-Mutex mPg;
+static UnbufferedSerial bt(PB_13,PB_12);
 
 //Variables
 bool dir0=0, brake0=0;
@@ -90,6 +94,8 @@ void init()
     FPGA.format(16,1); // SPI format: 16-bit words, mode 1
     FPGA.frequency(500000);
 
+    bt.baud(9600);
+
     ResetFPGA();
     ResetFPGA_SPI();
     
@@ -126,6 +132,8 @@ int main()
         Kernel::Clock::time_point now = Kernel::Clock::now();
         if(now - lastPrint > printInterval)
         {
+            // char c = '!';
+            // bt.write(&c, 1);
             lastPrint = now;
             mPg.lock();
             cvel = currentVel0;
@@ -138,50 +146,7 @@ int main()
             printf("%d %d\n", (int)(ki*10), (int)(kp*10));
         }
 
-        char key;
-        float incremention=0.4;
-        if(pc.readable())
-        { 
-            pc.read(&key, 1);
-            if(key == 'w')
-            {
-                idealVel0 += incremention;
-                idealVel1 += incremention;
-            } else if(key == 's')
-            {
-                idealVel0 -= incremention;
-                idealVel1 -= incremention;
-            } else if(key == 'a')
-            {
-                idealVel0 -= incremention;
-                idealVel1 += incremention;
-            } else if(key == 'd')
-            {
-                idealVel0 += incremention;
-                idealVel1 -= incremention;
-            } else if(key == ' ')
-            {
-                idealVel0 = 0;
-                idealVel1 = 0;
-            }
-            if(key == 'i')
-            {
-                ki += 0.1;
-            }
-            if(key == 'I')
-            {
-                ki -= 0.1;
-            }
-            if(key == 'p')
-            {
-                kp += 0.1;
-            }
-            if(key == 'P')
-            {
-                kp -= 0.1;
-            }
-            wait_us(100);
-        }
+        read_serial(&bt);
     }
 }
 
@@ -249,5 +214,58 @@ void applyPI(PwmOut * pwm, float * currentVel, float idealVel, int16_t dP, int16
     {
         *integration = 0;
         pwm->pulsewidth_us(0);
+    }
+}
+
+void read_serial(UnbufferedSerial * serial)
+{
+    char key;
+    float incremention=0.4;
+    if(serial->readable())
+    { 
+        serial->read(&key, 1);
+        // serial->write(&key, 1);
+
+        mPg.lock();
+        if(key == 'w')
+        {
+            idealVel0 += incremention;
+            idealVel1 += incremention;
+        } else if(key == 's')
+        {
+            idealVel0 -= incremention;
+            idealVel1 -= incremention;
+        } else if(key == 'a')
+        {
+            idealVel0 -= incremention;
+            idealVel1 += incremention;
+        } else if(key == 'd')
+        {
+            idealVel0 += incremention;
+            idealVel1 -= incremention;
+        } else if(key == ' ')
+        {
+            idealVel0 = 0;
+            idealVel1 = 0;
+        }
+        if(key == 'i')
+        {
+            ki += 0.1;
+        }
+        if(key == 'I')
+        {
+            ki -= 0.1;
+        }
+        if(key == 'p')
+        {
+            kp += 0.1;
+        }
+        if(key == 'P')
+        {
+            kp -= 0.1;
+        }
+        mPg.unlock();
+        wait_us(100);
+        key = '\n';
     }
 }
