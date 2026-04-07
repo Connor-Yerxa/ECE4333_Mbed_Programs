@@ -10,6 +10,7 @@ void ExtInterruptISR(void);
 void WatchdogThread(void const *argument);
 void WatchdogISR(void const *n);
 
+void applyPI(PwmOut * pwm, float * currentVel, float idealVel, int16_t dP, int16_t dT, float * integration, DigitalOut * MDIR);
 
 // Processes and threads
 osThreadId WatchdogId, ExtCollisionId, PiControlId;     // Thread ID's
@@ -45,13 +46,13 @@ int duty0=0, duty1=0;
 Ticker PeriodicInt;
 
 //PI controller vars
-float kp = 5, ki = 1;
-float currentVel0=0, currentVel1;
-float idealVel0 = 2 * 3.1415;
-float idealVel1 = 2 * 3.1415;
+float kp = 3, ki = 1;
+float currentVel0=0, currentVel1=0;
+float idealVel0 = 0;
+float idealVel1 = 0;
 // float e0;
 int stepsPerRotation = 1216;
-int dP0, dT0, dP1, dT1;
+int16_t dP0=0, dT0=1, dP1=0, dT1=1;
 
 //COMs
 UnbufferedSerial pc(USBTX, USBRX);
@@ -101,41 +102,12 @@ void init()
     pwm1.pulsewidth_us(duty1);
     MDIR1 = dir1;
     MBRAKE1 = brake1;
-}
 
-void applyPI(PwmOut pwm, float * currentVel, float idealVel, int dP, int dT, float * integration, DigitalOut MDIR)
-{
-    *currentVel = 1000000 * 2 * 3.1415 * (float)dP/((float)dT*(float)stepsPerRotation*10.24); // in rad/s
-
-    float e = idealVel - *currentVel;
-
-    //position estimate
-    // posDeg = currentPosition * 360.0f / (float)stepsPerRotation;
-
-    // float deriv = kd*Vel0/abs(idealAngle-posDeg);
-    // printf("\n%d\n", (int)deriv);
-
-    // if(newSide == side) 
-    *integration = ki*(*integration + e);
-    float propotion = kp * e;
-
-    if(abs(*integration) > maxDuty)
-    {
-        *integration = maxDuty * (*integration)/abs(*integration);
-    }
-    // else integration = 0;
-
-    
-    int duty = *integration + propotion;
-
-    if(abs(duty) > maxDuty)
-    {
-        duty0 = maxDuty * duty/abs(duty);
-    }
-
-    bool dir = duty <= 0;
-    MDIR = dir;
-    pwm.pulsewidth_us(abs(duty));
+    int8_t Dummy;
+    dP0 = FPGA.write(Dummy); // Read QEI-0 position register 
+    dT0 = FPGA.write(Dummy); // Read QEI-0 time interval
+    dP1 = FPGA.write(Dummy); // Read QEI-1 position register 
+    dT1 = FPGA.write(Dummy); // Read QEI-1 time interval
 }
 
 // main() runs in its own thread in the OS
@@ -143,16 +115,61 @@ int main()
 {
     init();
     while (true) {
-        float cvel, idvel, err;
+        float cvel, idvel, err, cvel1, idvel1;
         mPg.lock();
         cvel = currentVel0;
         idvel = idealVel0;
-        // err = e0;
+        cvel1 = currentVel1;
+        idvel1 = idealVel1;
         mPg.unlock();
-        printf("C: %d I: %d\n", (int)(cvel * 100), (int)(idvel * 100));
-        // printf("D: %d\n", dP0);
-        // printf("e: %d\n", (int)(err*100));
+        printf("\nC0: %d I0: %d\n", (int)(cvel * 100), (int)(idvel * 100));
+        printf("C1: %d I1: %d\n", (int)(cvel1 * 100), (int)(idvel1 * 100));
+        printf("%d %d\n", (int)(ki*10), (int)(kp*10));
         wait_us(500000);
+
+        char key;
+        float incremention=0.2;
+        if(pc.readable())
+        { 
+            pc.read(&key, 1);
+            if(key == 'w')
+            {
+                idealVel0 += incremention;
+                idealVel1 += incremention;
+            } else if(key == 's')
+            {
+                idealVel0 -= incremention;
+                idealVel1 -= incremention;
+            } else if(key == 'a')
+            {
+                idealVel0 -= incremention;
+                idealVel1 += incremention;
+            } else if(key == 'd')
+            {
+                idealVel0 += incremention;
+                idealVel1 -= incremention;
+            } else if(key == ' ')
+            {
+                idealVel0 = 0;
+                idealVel1 = 0;
+            }
+            if(key == 'i')
+            {
+                ki += 0.1;
+            }
+            if(key == 'I')
+            {
+                ki -= 0.1;
+            }
+            if(key == 'p')
+            {
+                kp += 0.1;
+            }
+            if(key == 'P')
+            {
+                kp -= 0.1;
+            }
+        }
     }
 }
 
@@ -173,24 +190,11 @@ void PiControlThread(void const *argument) {
         dT0 = FPGA.write(Dummy); // Read QEI-0 time interval
         dP1 = FPGA.write(Dummy); // Read QEI-1 position register 
         dT1 = FPGA.write(Dummy); // Read QEI-1 time interval
-        // Sign extened 16-bit word to 32-bit int
-        if (dP0 & 0x00008000) {
-        dP0 = dP0 | 0xFFFF0000;
-        // Units of dP0 are in ‘counts’ (assume 4× counting)
-        // 1 count represents 2π/(4*N) rad
-        }
-        // Accumulated position 
-        // currentPosition += dP0;
 
-        // Velocity estimate 
-        // currentVel = 10000 * ((float)dP0) / ((float)dT0); // in units of counts/10.24 μs OR
+        // printf("%d %d %d %d\n", dP0, dT0, dP1, dT1);
         
-        mPg.lock();
-        applyPI(pwm0, &currentVel0, idealVel0, dP0, dT0, &integration0, MDIR0);
-        // applyPI(pwm1, &currentVel1, idealVel1, dP1, dT1, &integration1, MDIR1);
-        mPg.unlock();
-
-        // side = newSide;
+        applyPI(&pwm0, &currentVel0, idealVel0, dP0, dT0, &integration0, &MDIR0);
+        applyPI(&pwm1, &currentVel1, idealVel1, dP1, dT1, &integration1, &MDIR1);
     } 
 }
 
@@ -199,4 +203,39 @@ void PeriodicInterruptISR(void) {
     osSignalSet(PiControlId,0x1); // Activate the signal, PiControl, with each periodic timer interrupt.
 }
 
+void applyPI(PwmOut * pwm, float * currentVel, float idealVel, int16_t dP, int16_t dT, float * integration, DigitalOut * MDIR)
+{
+    int duty;
+    mPg.lock();
+    *currentVel = 1000000 * (float)dP/((float)dT*(float)stepsPerRotation*10.24); // in rps
+    mPg.unlock();
+    if(idealVel != 0)
+    {
+        float e = idealVel - *currentVel;
+        // printf("%d\n", (int)(e*100));
 
+        *integration = ki*(*integration + e);
+        float propotion = kp * e;
+
+        
+        if(*integration > maxDuty) *integration = maxDuty;
+        if(*integration < -1*maxDuty) *integration = -1 * maxDuty;
+
+
+        duty = *integration + propotion;
+
+        if(duty > maxDuty) duty = maxDuty;
+        if(duty < -1*maxDuty) duty = -1 * maxDuty;
+
+        bool dir = duty <= 0;
+        *MDIR = dir;
+
+        // printf("%d\n", duty);
+        pwm->pulsewidth_us(abs(duty));
+    }
+    else 
+    {
+        *integration = 0;
+        pwm->pulsewidth_us(0);
+    }
+}

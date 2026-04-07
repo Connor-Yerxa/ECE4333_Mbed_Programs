@@ -19,7 +19,7 @@ osThreadDef(WatchdogThread, osPriorityRealtime, 1024);  // Declare WatchdogThrea
 osTimerDef(Wdtimer, WatchdogISR);   
 
 // IO Port Configuration
-DigitalOut MDIR(PF_2);
+DigitalOut MDIR(PF_14);
 DigitalOut MBRAKE(PG_1);
 PwmOut pwm0(PE_9); // PE_9 at CN10 configured as PWM out with alias pwm0
 
@@ -43,7 +43,7 @@ Ticker PeriodicInt;
 //PI controller vars
 float kp = 5, ki = 1;
 float currentVel=0;
-float idealVel = 2 * 3.1415;
+float idealVel = 4 * 3.1415;
 float e;
 int stepsPerRotation = 1216;
 int dP0, dT0, dP1, dT1;
