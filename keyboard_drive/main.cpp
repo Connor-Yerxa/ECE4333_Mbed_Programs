@@ -1,6 +1,10 @@
 #include "mbed.h"
 #include <cstdint>
 #include <cstdio>
+#include <ratio>
+
+#include <chrono>
+using namespace std::chrono;
 
 // Function prototypes
 void PiControlThread(void const *argument);
@@ -46,7 +50,7 @@ int duty0=0, duty1=0;
 Ticker PeriodicInt;
 
 //PI controller vars
-float kp = 3, ki = 1;
+float kp = 5, ki = 1;
 float currentVel0=0, currentVel1=0;
 float idealVel0 = 0;
 float idealVel1 = 0;
@@ -114,21 +118,28 @@ void init()
 int main()
 {
     init();
+    const milliseconds printInterval(500);
+    Kernel::Clock::time_point lastPrint = Kernel::Clock::now();
+
     while (true) {
         float cvel, idvel, err, cvel1, idvel1;
-        mPg.lock();
-        cvel = currentVel0;
-        idvel = idealVel0;
-        cvel1 = currentVel1;
-        idvel1 = idealVel1;
-        mPg.unlock();
-        printf("\nC0: %d I0: %d\n", (int)(cvel * 100), (int)(idvel * 100));
-        printf("C1: %d I1: %d\n", (int)(cvel1 * 100), (int)(idvel1 * 100));
-        printf("%d %d\n", (int)(ki*10), (int)(kp*10));
-        wait_us(500000);
+        Kernel::Clock::time_point now = Kernel::Clock::now();
+        if(now - lastPrint > printInterval)
+        {
+            lastPrint = now;
+            mPg.lock();
+            cvel = currentVel0;
+            idvel = idealVel0;
+            cvel1 = currentVel1;
+            idvel1 = idealVel1;
+            mPg.unlock();
+            printf("\nC0: %d I0: %d\n", (int)(cvel * 100), (int)(idvel * 100));
+            printf("C1: %d I1: %d\n", (int)(cvel1 * 100), (int)(idvel1 * 100));
+            printf("%d %d\n", (int)(ki*10), (int)(kp*10));
+        }
 
         char key;
-        float incremention=0.2;
+        float incremention=0.4;
         if(pc.readable())
         { 
             pc.read(&key, 1);
@@ -169,6 +180,7 @@ int main()
             {
                 kp -= 0.1;
             }
+            wait_us(100);
         }
     }
 }
