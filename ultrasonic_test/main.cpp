@@ -1,0 +1,289 @@
+#include "mbed.h"
+#include <cstdint>
+#include <cstdio>
+#include <ratio>
+
+#include <chrono>
+using namespace std::chrono;
+
+Mutex mPg;
+
+// Function prototypes
+void PiControlThread(void const *argument);
+void PeriodicInterruptISR(void);
+void ExtCollisionThread(void const *argument);
+void ExtInterruptISR(void);
+void WatchdogThread(void const *argument);
+void WatchdogISR(void const *n);
+
+void applyPI(PwmOut * pwm, float * currentVel, float idealVel, int16_t dP, int16_t dT, float * integration, DigitalOut * MDIR);
+void read_serial(UnbufferedSerial * serial);
+
+
+// Processes and threads
+osThreadId WatchdogId, ExtCollisionId, PiControlId;     // Thread ID's
+osThreadDef(PiControlThread, osPriorityRealtime, 1024); // Declare PiControlThread as a thread
+osThreadDef(ExtCollisionThread, osPriorityHigh, 1024);  // Declare ExtCollisionThread as a thread
+osThreadDef(WatchdogThread, osPriorityRealtime, 1024);  // Declare WatchdogThread as a thread
+osTimerDef(Wdtimer, WatchdogISR);   
+
+// IO Port Configuration
+DigitalOut MDIR0(PF_14);
+DigitalOut MBRAKE0(PG_1);
+PwmOut pwm0(PE_9); // PE_9 at CN10 configured as PWM out with alias pwm0
+DigitalOut MDIR1(PF_15);
+DigitalOut MBRAKE1(PG_14);
+PwmOut pwm1(PE_11); // PE_9 at CN10 configured as PWM out with alias pwm0
+
+DigitalOut IoReset(PG_2);
+DigitalOut SpiReset(PG_3);                    // Declare a watchdog timer
+
+static UnbufferedSerial bt(PB_13,PB_12);
+
+//Variables
+bool dir0=0, brake0=0;
+bool dir1=0, brake1=0;
+
+uint8_t ID;
+
+int period=500;
+int maxDuty = 0.4*period;
+int duty0=0, duty1=0;
+
+
+Ticker PeriodicInt;
+
+//PI controller vars
+float kp = 5, ki = 1;
+float currentVel0=0, currentVel1=0;
+float idealVel0 = 0;
+float idealVel1 = 0;
+// float e0;
+int stepsPerRotation = 1216;
+int16_t dP0=0, dT0=1, dP1=0, dT1=1;
+
+//COMs
+UnbufferedSerial pc(USBTX, USBRX);
+SPI FPGA(PB_5, PB_4, PB_3);
+
+uint16_t USR0, USR1, USR2, USR3;
+
+void ResetFPGA()
+{
+    IoReset = 0; 
+    wait_us(5); 
+    IoReset = 1;
+    wait_us(5);
+    IoReset = 0;
+} 
+
+void ResetFPGA_SPI()
+{
+    SpiReset = 0;
+    SpiReset = 1;
+    wait_us(5);
+    SpiReset = 0;
+}
+
+void init()
+{
+    // Start execution of: PeriodicInterruptThread with ID, PeriodicInterruptId:
+    PiControlId = osThreadCreate(osThread(PiControlThread), NULL);
+    // Start periodic interrupt generaion, specifying the period, and address of the isr.
+    PeriodicInt.attach(&PeriodicInterruptISR, 50ms);
+
+    FPGA.format(16,1); // SPI format: 16-bit words, mode 1
+    FPGA.frequency(500000);
+
+    bt.baud(9600);
+
+    ResetFPGA();
+    ResetFPGA_SPI();
+    
+    ID = FPGA.write(0x8008); // ID of SPI slave is returned as 0x0017
+
+    pwm0.period_us(period); // This sets the PWM period to 500 us.
+
+    pwm0.pulsewidth_us(duty0);
+    MDIR0 = dir0;
+    MBRAKE0 = brake0;
+    
+    pwm1.period_us(period); // This sets the PWM period to 500 us.
+
+    pwm1.pulsewidth_us(duty1);
+    MDIR1 = dir1;
+    MBRAKE1 = brake1;
+
+    int8_t Dummy;
+    dP0 = FPGA.write(Dummy); // Read QEI-0 position register 
+    dT0 = FPGA.write(Dummy); // Read QEI-0 time interval
+    dP1 = FPGA.write(Dummy); // Read QEI-1 position register 
+    dT1 = FPGA.write(Dummy); // Read QEI-1 time interval
+
+    USR0 = FPGA.write(Dummy);
+    USR1 = FPGA.write(Dummy);
+    USR2 = FPGA.write(Dummy);
+    USR3 = FPGA.write(Dummy);
+}
+
+// main() runs in its own thread in the OS
+int main()
+{
+    init();
+    const milliseconds printInterval(500);
+    Kernel::Clock::time_point lastPrint = Kernel::Clock::now();
+
+    while (true) {
+        // float cvel, idvel, err, cvel1, idvel1;
+        uint16_t u0, u1, u2, u3;
+        Kernel::Clock::time_point now = Kernel::Clock::now();
+        if(now - lastPrint > printInterval)
+        {
+            // char c = '!';
+            // bt.write(&c, 1);
+            lastPrint = now;
+            mPg.lock();
+            // cvel = currentVel0;
+            // idvel = idealVel0;
+            // cvel1 = currentVel1;
+            // idvel1 = idealVel1;
+            u0 = USR0;
+            u1 = USR1;
+            u2 = USR2;
+            u3 = USR3;
+            mPg.unlock();
+            // printf("\nC0: %d I0: %d\n", (int)(cvel * 100), (int)(idvel * 100));
+            // printf("C1: %d I1: %d\n", (int)(cvel1 * 100), (int)(idvel1 * 100));
+            // printf("%d %d\n", (int)(ki*10), (int)(kp*10));
+
+            printf("%d %d %d %d\n", u0, u1, u2, u3);
+        }
+
+        read_serial(&bt);
+    }
+}
+
+// ******** Periodic Timer Interrupt Thread ********
+void PiControlThread(void const *argument) {
+    // int side=0, newSide=0;
+    float integration0=0, integration1=0;
+
+    // float posDeg=0;
+    // int currentPosition=0;
+    uint8_t Dummy=0;
+
+    while (true) {
+        osSignalWait(0x1, osWaitForever); // Go to sleep until signal, SignalPi, is received.
+
+        // May be executed in a loop or periodically
+        dP0 = FPGA.write(Dummy); // Read QEI-0 position register 
+        dT0 = FPGA.write(Dummy); // Read QEI-0 time interval
+        dP1 = FPGA.write(Dummy); // Read QEI-1 position register 
+        dT1 = FPGA.write(Dummy); // Read QEI-1 time interval
+
+        USR0 = FPGA.write(Dummy);
+        USR1 = FPGA.write(Dummy);
+        USR2 = FPGA.write(Dummy);
+        USR3 = FPGA.write(Dummy);
+
+        // printf("%d %d %d %d\n", dP0, dT0, dP1, dT1);
+        
+        // applyPI(&pwm0, &currentVel0, idealVel0, dP0, dT0, &integration0, &MDIR0);
+        // applyPI(&pwm1, &currentVel1, idealVel1, dP1, dT1, &integration1, &MDIR1);
+    } 
+}
+
+// ******** Period Timer Interrupt Handler ********
+void PeriodicInterruptISR(void) {
+    osSignalSet(PiControlId,0x1); // Activate the signal, PiControl, with each periodic timer interrupt.
+}
+
+void applyPI(PwmOut * pwm, float * currentVel, float idealVel, int16_t dP, int16_t dT, float * integration, DigitalOut * MDIR)
+{
+    int duty;
+    mPg.lock();
+    *currentVel = 1000000 * (float)dP/((float)dT*(float)stepsPerRotation*10.24); // in rps
+    mPg.unlock();
+    if(idealVel != 0)
+    {
+        float e = idealVel - *currentVel;
+        // printf("%d\n", (int)(e*100));
+
+        *integration = ki*(*integration + e);
+        float propotion = kp * e;
+
+        
+        if(*integration > maxDuty) *integration = maxDuty;
+        if(*integration < -1*maxDuty) *integration = -1 * maxDuty;
+
+
+        duty = *integration + propotion;
+
+        if(duty > maxDuty) duty = maxDuty;
+        if(duty < -1*maxDuty) duty = -1 * maxDuty;
+
+        bool dir = duty <= 0;
+        *MDIR = dir;
+
+        // printf("%d\n", duty);
+        pwm->pulsewidth_us(abs(duty));
+    }
+    else 
+    {
+        *integration = 0;
+        pwm->pulsewidth_us(0);
+    }
+}
+
+void read_serial(UnbufferedSerial * serial)
+{
+    char key;
+    float incremention=0.4;
+    if(serial->readable())
+    { 
+        serial->read(&key, 1);
+        // serial->write(&key, 1);
+
+        mPg.lock();
+        if(key == 'w')
+        {
+            idealVel0 += incremention;
+            idealVel1 += incremention;
+        } else if(key == 's')
+        {
+            idealVel0 -= incremention;
+            idealVel1 -= incremention;
+        } else if(key == 'a')
+        {
+            idealVel0 -= incremention;
+            idealVel1 += incremention;
+        } else if(key == 'd')
+        {
+            idealVel0 += incremention;
+            idealVel1 -= incremention;
+        } else if(key == ' ')
+        {
+            idealVel0 = 0;
+            idealVel1 = 0;
+        }
+        if(key == 'i')
+        {
+            ki += 0.1;
+        }
+        if(key == 'I')
+        {
+            ki -= 0.1;
+        }
+        if(key == 'p')
+        {
+            kp += 0.1;
+        }
+        if(key == 'P')
+        {
+            kp -= 0.1;
+        }
+        mPg.unlock();
+        wait_us(100);
+        key = '\n';
+    }
+}
