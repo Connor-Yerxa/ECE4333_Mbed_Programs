@@ -76,9 +76,9 @@ int duty0=0, duty1=0;
 Ticker PeriodicInt;
 
 //PI controller vars
-float kp = 10, ki = 4, distance_kp=0.008;
+float kp = 20, ki = 5, distance_kp=0.005;
 float currentVel0=0, currentVel1=0;
-float offsetVel = 1.5, maxVel=3;
+float offsetVel = 1.5, maxVel=2;
 float idealVel0 = 0; // Left
 float idealVel1 = 0; // Right
 float ideal_distance = 300;
@@ -349,28 +349,54 @@ void update_Speeds_to_line(
 
     float error;
 
-    error = ideal_distance - mm_right;
-    error += ideal_distance - (mm_right_front - sensor_rig_radius*(1/cos(3.14159/6) - 1));
+    error = 0;
+    int to_average=0;
+    if(mm_right < 5000)
+    {
+        error += ideal_distance - mm_right;
+        to_average++;
+    }
+    if(mm_right_front < 5000)
+    {
+        error += ideal_distance - (mm_right_front - sensor_rig_radius*(1/cos(3.14159/6) - 1));
+        to_average++;
+    }
+    if(mm_right_front < 5000)
+    {
+        error += ideal_distance - (mm_right_front - sensor_rig_radius*(1/cos(3.14159/3) - 1));
+        to_average++;
+    }
+
+    // error = ideal_distance - mm_right;
+    // error += ideal_distance - (mm_right_front - sensor_rig_radius*(1/cos(3.14159/6) - 1));
     // error += ideal_distance - (mm_right_front - sensor_rig_radius*(1/cos(3.14159/3) - 1));
-    error /= 2; // Average
+    // error /= 2; // Average
+
+    if(to_average != 0)
+    {
+        error /= to_average;
+    }
 
     // printf("%d\n", (int)(error*100));
     // printf("%d %d\n", (int)(mm_right*100), (int)((mm_right_front - sensor_rig_radius*(1/cos(3.14159/6) - 1))*100));
     // printf("%d\n", (int)((mm_right_front - sensor_rig_radius*(1/cos(3.14159/6) - 1))*100));
     printf("%d\n", (int)(error*100));
 
-    mPg.lock();
-    *rightVel = distance_kp*error;
-    *leftVel = -1 * *rightVel;
-
-    if(mm_front > ideal_distance)
+    if(error > -10000)
     {
-        *leftVel += offsetVel;
-        *rightVel += offsetVel;
+        mPg.lock();
+        *rightVel = distance_kp*error;
+        *leftVel = -1 * *rightVel;
+
+        if(mm_front > ideal_distance)
+        {
+            *leftVel += offsetVel;
+            *rightVel += offsetVel;
+        }
+        clampfloat(leftVel, maxVel);
+        clampfloat(rightVel, maxVel);
+        mPg.unlock();
     }
-    clampfloat(leftVel, maxVel);
-    clampfloat(rightVel, maxVel);
-    mPg.unlock();
 }
 
 float us2mm(uint16_t us)
