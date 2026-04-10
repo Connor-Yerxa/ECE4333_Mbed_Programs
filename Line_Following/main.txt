@@ -84,8 +84,6 @@ float idealVel1 = 0; // Right
 float ideal_distance = 300;
 float sensor_rig_radius = 90; // mm
 bool run_Wall_Following = false;
-float filtered_error=0;
-float new_error_weight = 0.3;
 // float e0;
 int stepsPerRotation = 1216;
 int16_t dP0=0, dT0=1, dP1=0, dT1=1;
@@ -363,9 +361,9 @@ void update_Speeds_to_line(
         error += ideal_distance - (mm_right_front - sensor_rig_radius*(1/cos(3.14159/6) - 1));
         to_average++;
     }
-    if(mm_front_right < 5000)
+    if(mm_right_front < 5000)
     {
-        error += ideal_distance - (mm_front_right - sensor_rig_radius*(1/cos(3.14159/3) - 1));
+        error += ideal_distance - (mm_right_front - sensor_rig_radius*(1/cos(3.14159/3) - 1));
         to_average++;
     }
 
@@ -384,21 +382,21 @@ void update_Speeds_to_line(
     // printf("%d\n", (int)((mm_right_front - sensor_rig_radius*(1/cos(3.14159/6) - 1))*100));
     printf("%d\n", (int)(error*100));
 
-    clampfloat(&error, 10000.0);
-    filtered_error = (1-new_error_weight)*filtered_error + new_error_weight*error;
-
-    mPg.lock();
-    *rightVel = distance_kp*filtered_error;
-    *leftVel = -1 * *rightVel;
-
-    if(mm_front > ideal_distance)
+    if(error > -10000)
     {
-        *leftVel += offsetVel;
-        *rightVel += offsetVel;
+        mPg.lock();
+        *rightVel = distance_kp*error;
+        *leftVel = -1 * *rightVel;
+
+        if(mm_front > ideal_distance)
+        {
+            *leftVel += offsetVel;
+            *rightVel += offsetVel;
+        }
+        clampfloat(leftVel, maxVel);
+        clampfloat(rightVel, maxVel);
+        mPg.unlock();
     }
-    clampfloat(leftVel, maxVel);    
-    clampfloat(rightVel, maxVel);
-    mPg.unlock();
 }
 
 float us2mm(uint16_t us)
