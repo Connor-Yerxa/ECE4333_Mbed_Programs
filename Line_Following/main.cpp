@@ -76,7 +76,7 @@ int duty0=0, duty1=0;
 Ticker PeriodicInt;
 
 //PI controller vars
-float kp = 20, ki = 5, distance_kp=0.005;
+float kp = 20, ki = 5, distance_kp=0.004;
 float currentVel0=0, currentVel1=0;
 float offsetVel = 1.5, maxVel=2;
 float idealVel0 = 0; // Left
@@ -85,7 +85,7 @@ float ideal_distance = 300;
 float sensor_rig_radius = 90; // mm
 bool run_Wall_Following = false;
 float filtered_error=0;
-float new_error_weight = 0.3;
+float new_error_weight = 1;
 // float e0;
 int stepsPerRotation = 1216;
 int16_t dP0=0, dT0=1, dP1=0, dT1=1;
@@ -338,36 +338,38 @@ void update_Speeds_to_line(
     float * rightVel, 
     uint16_t us_front, 
     uint16_t us_right, 
-    uint16_t us_front_right, 
+    uint16_t us_right_back, 
     uint16_t us_right_front,
     float ideal_distance
 ){
     mPg.lock();
     float mm_front = us2mm(us_front);
     float mm_right = us2mm(us_right);
-    float mm_front_right = us2mm(us_front_right);
+    float mm_right_back = us2mm(us_right_back);
     float mm_right_front = us2mm(us_right_front);
     mPg.unlock();
 
     float error;
 
+    printf("rf%d r%d\n", (int)mm_right_front, (int)mm_right);
+
     error = 0;
     int to_average=0;
-    if(mm_right < 5000)
+    if(mm_right < 50000)
     {
         error += ideal_distance - mm_right;
         to_average++;
     }
-    if(mm_right_front < 5000)
+    if(mm_right_front < 50000)
     {
-        error += ideal_distance - (mm_right_front - sensor_rig_radius*(1/cos(3.14159/6) - 1));
+        error += ideal_distance - (mm_right_front*cos(3.14159/6));
         to_average++;
     }
-    if(mm_front_right < 5000)
-    {
-        error += ideal_distance - (mm_front_right - sensor_rig_radius*(1/cos(3.14159/3) - 1));
-        to_average++;
-    }
+    // if(mm_right_back < 50000)
+    // {
+    //     error += ideal_distance - (mm_right_back*cos(3.14159/6));
+    //     to_average++;
+    // }
 
     // error = ideal_distance - mm_right;
     // error += ideal_distance - (mm_right_front - sensor_rig_radius*(1/cos(3.14159/6) - 1));
@@ -382,7 +384,7 @@ void update_Speeds_to_line(
     // printf("%d\n", (int)(error*100));
     // printf("%d %d\n", (int)(mm_right*100), (int)((mm_right_front - sensor_rig_radius*(1/cos(3.14159/6) - 1))*100));
     // printf("%d\n", (int)((mm_right_front - sensor_rig_radius*(1/cos(3.14159/6) - 1))*100));
-    printf("%d\n", (int)(error*100));
+    // printf("%d\n", (int)(error*100));
 
     clampfloat(&error, 10000.0);
     filtered_error = (1-new_error_weight)*filtered_error + new_error_weight*error;
